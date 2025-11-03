@@ -1,0 +1,141 @@
+*ADHD survival analysis
+use "final_analysis_file.dta", clear
+
+estimates clear
+
+*generate new census date which includes month and day
+destring YEAR, replace
+gen CENSUSYEAR=YEAR
+gen CENSUSMONTH=01
+gen CENSUSDAY=15
+
+gen CENSUSDATE=mdy(CENSUSMONTH,CENSUSDAY,CENSUSYEAR)
+format CENSUSDATE %tdCYND
+drop CENSUSYEAR CENSUSMONTH CENSUSDAY
+
+*generate date of first adhd on SEN record
+gen first_ADHD_SEN_date=CENSUSDATE if ADHD==1
+format first_ADHD_SEN_date %tdCYND
+
+*reformat dates
+gen NCCHD_birth_date2=date(NCCHD_birth_date, "YMD")
+format NCCHD_birth_date2 %tdCYND
+gen first_adhd_med_date2=date(first_adhd_med_date, "YMD")
+format first_adhd_med_date2 %tdCYND
+gen first_adhd_diag_date2=date(first_adhd_diag_date, "YMD")
+format first_adhd_diag_date2 %tdCYND
+
+drop NCCHD_birth_date first_adhd_med_date first_adhd_diag_date
+rename (NCCHD_birth_date2 first_adhd_med_date2 first_adhd_diag_date2) (NCCHD_birth_date first_adhd_med_date first_adhd_diag_date)
+
+*Collapse file 
+collapse (first) NCCHD_birth_date gender_cat ethnicity_cat deprivation (mean) AGE_PUPILCENSUS (first) matage_cat mat_smoking_cat parity_cat apgarcat delivery_cat bw_cent multiple_binary GEST_AGE (max) anySEN sens_impair ASD com_prob learning_dif physical_med_dif emotional_dif covered child_any_ADHD ADHD child_adhd_med child_adhd_diag child_ADHD_GP Depression_bcd Depression_bd Depression_c Depression_d epilepsy (first) first_adhd_med_date first_adhd_diag_date first_ADHD_SEN_date FOLLOW_UP_DATE, by (ALF_PE IRN_PE)
+
+*drop if child is not covered by SAIL for full study period
+drop if covered==0
+
+*generate date of first record of SEN
+egen ADHD_diag_date=rowmin (first_adhd_med_date first_adhd_diag_date first_ADHD_SEN_date)
+format ADHD_diag_date %tdCYND
+replace ADHD_diag_date=FOLLOW_UP_DATE if ADHD_diag_date==.
+
+*create varlist
+vl create depressionlist = (Depression_bcd Depression_bd Depression_c Depression_d)
+ 
+**replace "missing" with "." for categories where missing is not included as dummy
+replace gender_cat=. if gender_cat==3
+replace deprivation=. if deprivation==6
+replace matage_cat=. if matage_cat==5
+replace parity_cat=. if parity_cat==3
+replace apgarcat=. if apgarcat==4 
+replace bw_cent=. if bw_cent==8
+
+*recode ethnicity to combine categories 2,3,4 as numbers are too small
+replace ethnicity=2 if ethnicity==3 | ethnicity==4
+replace ethnicity=3 if ethnicity==5
+label define ethnicitylabelnew 1 "White" 2 "Asian/Black/Mixed" 3"Other" 9 "Missing", modify
+label value ethnicity_cat ethnicitylabelnew
+tab ethnicity_cat, mi
+
+*cox analysis
+stset ADHD_diag_date, origin (time NCCHD_birth_date) failure (child_any_ADHD==1) id(ALF_PE) scale(365.25)
+
+foreach v of varlist $depressionlist {
+*univariate
+stcox `v'
+eststo `v'_uni
+
+*multivariate 1
+stcox `v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS
+eststo `v'_mv1
+
+*multivariate 2
+stcox `v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary
+eststo `v'_mv2
+
+*multivariate 3
+stcox `v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary i.epilepsy
+eststo `v'_mv3
+
+*multivariate 4
+stcox `v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary i.epilepsy b4.bw_cent GEST_AGE b3.apgarcat i.delivery_cat
+eststo `v'_mv4
+}
+
+*create table for all estimates stored
+esttab _all using "results.csv", cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+title("Cox results- ADHD Depression") nolabel plain noobs ///
+replace
+
+*create table just for mv3
+esttab *mv3 using "results_mv3.csv", /// 
+cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+keep(Depression*) /// 
+title("Cox results- Depression - Multivariate 3") /// 
+label plain noobs /// 
+mtitles() ///
+stats(N,fmt("%9.0fc")) ///
+replace
+
+*create table just for mv4
+esttab *mv4 using "results_mv4.csv", /// 
+cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+keep(Depression*) /// 
+title("Cox results- Depression - Multivariate 4") /// 
+label plain noobs /// 
+mtitles() ///
+stats(N,fmt("%9.0fc")) ///
+replace
+
+/*create table just for uni
+esttab *uni using "results_uni.csv", /// 
+cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+title("Cox results- ADHD -Univariate") /// 
+keep(Depression* SSRI* snri* mirt* TCA*) ///
+label plain noobs /// 
+mtitles() ///
+replace
+
+*create table just for mv1
+esttab *mv1 using "results_mv1.csv", /// 
+cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+keep(Depression* SSRI* snri* mirt* TCA*) ///
+title("Cox results- ADHD - Multivariate 1") /// 
+label plain noobs /// 
+mtitles() ///
+replace
+
+*create table just for mv2
+esttab *mv2 using "results_mv2.csv", /// 
+cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
+keep(Depression* SSRI* snri* mirt* TCA*) ///
+title("Cox results- ADHD - Multivariate 4") /// 
+label plain noobs /// 
+mtitles() ///
+replace
+//can add mtitles() or use order() to change order of coefficients
+*/
+log close 
+
+**etc......
+******************************************************************************** 
