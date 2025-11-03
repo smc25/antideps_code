@@ -87,55 +87,5 @@ esttab _all using "results.csv", cells ("b(label(HR)) ci_l(label(Lower limit)) c
 title("Cox results- ADHD Depression") nolabel plain noobs ///
 replace
 
-*create table just for mv3
-esttab *mv3 using "results_mv3.csv", /// 
-cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
-keep(Depression*) /// 
-title("Cox results- Depression - Multivariate 3") /// 
-label plain noobs /// 
-mtitles() ///
-stats(N,fmt("%9.0fc")) ///
-replace
 
-*create table just for mv4
-esttab *mv4 using "results_mv4.csv", /// 
-cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
-keep(Depression*) /// 
-title("Cox results- Depression - Multivariate 4") /// 
-label plain noobs /// 
-mtitles() ///
-stats(N,fmt("%9.0fc")) ///
-replace
-
-/*create table just for uni
-esttab *uni using "results_uni.csv", /// 
-cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
-title("Cox results- ADHD -Univariate") /// 
-keep(Depression* SSRI* snri* mirt* TCA*) ///
-label plain noobs /// 
-mtitles() ///
-replace
-
-*create table just for mv1
-esttab *mv1 using "results_mv1.csv", /// 
-cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
-keep(Depression* SSRI* snri* mirt* TCA*) ///
-title("Cox results- ADHD - Multivariate 1") /// 
-label plain noobs /// 
-mtitles() ///
-replace
-
-*create table just for mv2
-esttab *mv2 using "results_mv2.csv", /// 
-cells ("b(label(HR)) ci_l(label(Lower limit)) ci_u (label(Upper limit)) p(label(p-value))") eform ///
-keep(Depression* SSRI* snri* mirt* TCA*) ///
-title("Cox results- ADHD - Multivariate 4") /// 
-label plain noobs /// 
-mtitles() ///
-replace
-//can add mtitles() or use order() to change order of coefficients
-*/
-log close 
-
-**etc......
 ******************************************************************************** 
