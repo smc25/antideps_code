@@ -1,0 +1,138 @@
+***Cox proportional hazards analysis - revisions
+***Author - Saraid McIlvride
+***Last modified - 04/06/26
+
+capture log close
+log using "cox_analysis.log", replace text
+
+use "final_analysis_file.dta", clear
+
+***========================
+*** DATA PREPARATION
+***========================
+
+* Replace missing value codes with Stata missing (.) so they are excluded from models
+replace gender_cat=. if gender_cat==3
+replace deprivation=. if deprivation==6
+replace matage_cat=. if matage_cat==5
+replace parity_cat=. if parity_cat==3
+
+* Recode ethnicity to combine small categories to avoid model convergence issues
+replace ethnicity_cat = 2 if inlist(ethnicity_cat, 3, 4)
+replace ethnicity_cat = 3 if ethnicity_cat == 5
+label define ethnicitylabelnew 1 "White" 2 "Asian/Black/Mixed" 3 "Other" 9 "Missing", modify
+label values ethnicity_cat ethnicitylabelnew
+tab ethnicity_cat, mi
+
+***========================
+*** DECLARE SURVIVAL DATA
+*** Time origin is date of birth
+*** Failure event is first ADHD diagnosis
+*** Scale converts days to years
+***========================
+
+stset ADHD_diag_date, origin(time NCCHD_birth_date) failure(child_any_ADHD==1) ///
+    id(ALF_PE) scale(365.25)
+
+***========================
+*** HAZARD RATIO TABLES
+***========================
+
+* Clear any previous stored estimates
+eststo clear
+estimates drop _all
+
+*--- Table 1: No interaction ---
+* Depression and Antidepressants included as separate main effects
+
+* Unadjusted model
+stcox Depression Antidepressants, vce(robust)
+eststo uni
+
+* Partially adjusted - sex, deprivation, ethnicity, age
+* Base category set to deprivation quintile 5; female and white coded automatically
+stcox Depression Antidepressants i.gender_cat b5.deprivation ///
+    i.ethnicity_cat AGE_PUPILCENSUS, vce(robust)
+eststo mv1
+
+* Fully adjusted - additionally includes maternal age, smoking, parity, multiple birth, epilepsy
+* Base category set to deprivation quintile 5, maternal age category 2
+stcox Depression Antidepressants i.gender_cat b5.deprivation ///
+    i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+    i.parity_cat i.multiple_binary i.epilepsy, vce(robust)
+eststo mv3
+
+* Export HR table - no interaction - all three models
+esttab uni mv1 mv3 using "HR_no_interaction.csv", ///
+    eform ///
+    cells("b(fmt(3) label(HR)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    mlabels("Unadjusted" "Partially adjusted" "Fully adjusted") ///
+    nostar nonumber replace ///
+    scalars("N Number of observations" "N_fail Number of events" "N_sub Number of subjects") ///
+    addnotes("Hazard ratios estimated using Cox proportional hazards regression with robust standard errors. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+    title("Hazard ratios for ADHD diagnosis without interaction term")
+
+*--- Table 2: With interaction in all 3 models ---
+* Depression##Antidepressants includes main effects and interaction term
+
+* Clear stored estimates before running interaction models
+eststo clear
+estimates drop _all
+
+* Unadjusted with interaction
+stcox Depression##Antidepressants, vce(robust)
+eststo uni_int
+
+* Partially adjusted with interaction
+stcox Depression##Antidepressants i.gender_cat b5.deprivation ///
+    i.ethnicity_cat AGE_PUPILCENSUS, vce(robust)
+eststo mv1_int
+
+* Fully adjusted with interaction
+stcox Depression##Antidepressants i.gender_cat b5.deprivation ///
+    i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+    i.parity_cat i.multiple_binary i.epilepsy, vce(robust)
+eststo mv3_int
+
+* Export HR table - with interaction - all three models
+esttab uni_int mv1_int mv3_int using "HR_interaction.csv", ///
+    eform ///
+    cells("b(fmt(3) label(HR)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    mlabels("Unadjusted" "Partially adjusted" "Fully adjusted") ///
+    nostar nonumber replace ///
+    scalars("N Number of observations" "N_fail Number of events" "N_sub Number of subjects") ///
+    addnotes("Hazard ratios estimated using Cox proportional hazards regression with robust standard errors. An interaction term between maternal depression and antidepressant exposure is included in all models. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+    title("Hazard ratios for ADHD diagnosis with interaction term")
+
+***========================
+*** PROPORTIONAL HAZARDS ASSUMPTION
+*** Assessed using formal Schoenfeld residuals test and log-log plots of the survival function
+***========================
+
+* Re-run fully adjusted model with interaction for assumption checks
+* Separate run needed as stored estimates above do not support phtest
+stcox Depression##Antidepressants i.gender_cat b5.deprivation ///
+    i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+    i.parity_cat i.multiple_binary i.epilepsy, vce(robust)
+
+* Formal Schoenfeld residuals test
+* Significant p value suggests violation of proportional hazards assumption
+* Rho near zero and non-significant p suggests assumption holds
+estat phtest, detail
+
+* Log-log plot for Depression
+* Lines should be approximately parallel if proportional hazards assumption holds
+stphplot, by(Depression) ///
+    title("Log-log plot - Depression") ///
+    xtitle("Time (years)") ///
+    ytitle("Log-log survival")
+graph export "phtest_depression.png", replace width(2000)
+
+* Log-log plot for Antidepressants
+stphplot, by(Antidepressants) ///
+    title("Log-log plot - Antidepressants") ///
+    xtitle("Time (years)") ///
+    ytitle("Log-log survival")
+graph export "phtest_antidepressants.png", replace width(2000)
+
+log close

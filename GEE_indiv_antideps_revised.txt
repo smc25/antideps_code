@@ -1,0 +1,444 @@
+***======================================================
+*** GEE MODELS FOR INDIVIDUAL ANTIDEPRESSANTS - revisions
+***======================================================
+* Author: Saraid McIlvride
+* Last modified: 30/06/26
+
+* Purpose: GEE models for individual antidepressant types and combinations
+* vs unexposed. Three models: unadjusted, partially adjusted and fully adjusted.
+* Odds ratios, predicted probabilities and marginal effects estimated.
+
+capture log close
+log using "GEE_individual_AD.log", replace text
+
+use "final_analysis_file.dta", clear
+
+***========================
+*** DATA PREPARATION
+***========================
+
+* Replace missing value codes with Stata missing (.) so they are excluded from models
+replace gender_cat=. if gender_cat==3
+replace deprivation=. if deprivation==6
+replace matage_cat=. if matage_cat==5
+replace parity_cat=. if parity_cat==3
+
+* Create flags for class-only exposure
+* Each variable = 1 if exposed to that class only and no other class
+gen SSRI_only  = (SSRIs==1  & TCAs==0 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0)
+gen TCA_only   = (TCAs==1   & SSRIs==0 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0)
+gen TeCA_only  = (TeCAs==1  & SSRIs==0 & TCAs==0  & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0)
+gen SARI_only  = (SARIs==1  & SSRIs==0 & TCAs==0  & TeCAs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0)
+gen SNRI_only  = (SNRIs==1  & SSRIs==0 & TCAs==0  & TeCAs==0 & SARIs==0 & MAOIs==0 & Other_antidep==0)
+gen MAOI_only  = (MAOIs==1  & SSRIs==0 & TCAs==0  & TeCAs==0 & SARIs==0 & SNRIs==0 & Other_antidep==0)
+gen Other_only = (Other_antidep==1 & SSRIs==0 & TCAs==0 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0)
+
+* Create flags for individual drug-only exposure
+* Each variable = 1 if exposed to that drug only and no other antidepressant
+gen citalo_only = (Citalopram==1 & Amitriptyline_hcl==0 & Clomipramine_hcl==0 & Dosulepin_hcl==0 & Doxepin==0 & Imipramine_hcl==0 & Lofepramine==0 & Nortriptyline==0 & Trazodone_hcl==0 & Trimipramine==0 & Phenelzine==0 & Tranylcypromine==0 & Moclobemide==0 & Flupentixol==0 & Fluvoxamine==0 & Fluoxetine==0 & Sertraline==0 & Paroxetine==0 & Venlafaxine==0 & Reboxetine==0 & Mirtazapine==0 & Escitalopram==0 & Agomelatine==0 & Vortioxetine==0 & Duloxetine==0)
+
+gen fluox_only = (Fluoxetine==1 & Amitriptyline_hcl==0 & Clomipramine_hcl==0 & Dosulepin_hcl==0 & Doxepin==0 & Imipramine_hcl==0 & Lofepramine==0 & Nortriptyline==0 & Trazodone_hcl==0 & Trimipramine==0 & Phenelzine==0 & Tranylcypromine==0 & Moclobemide==0 & Flupentixol==0 & Fluvoxamine==0 & Citalopram==0 & Sertraline==0 & Paroxetine==0 & Venlafaxine==0 & Reboxetine==0 & Mirtazapine==0 & Escitalopram==0 & Agomelatine==0 & Vortioxetine==0 & Duloxetine==0)
+
+gen sert_only = (Sertraline==1 & Amitriptyline_hcl==0 & Clomipramine_hcl==0 & Dosulepin_hcl==0 & Doxepin==0 & Imipramine_hcl==0 & Lofepramine==0 & Nortriptyline==0 & Trazodone_hcl==0 & Trimipramine==0 & Phenelzine==0 & Tranylcypromine==0 & Moclobemide==0 & Flupentixol==0 & Fluvoxamine==0 & Fluoxetine==0 & Citalopram==0 & Paroxetine==0 & Venlafaxine==0 & Reboxetine==0 & Mirtazapine==0 & Escitalopram==0 & Agomelatine==0 & Vortioxetine==0 & Duloxetine==0)
+
+gen amitrip_only = (Amitriptyline_hcl==1 & Citalopram==0 & Clomipramine_hcl==0 & Dosulepin_hcl==0 & Doxepin==0 & Imipramine_hcl==0 & Lofepramine==0 & Nortriptyline==0 & Trazodone_hcl==0 & Trimipramine==0 & Phenelzine==0 & Tranylcypromine==0 & Moclobemide==0 & Flupentixol==0 & Fluvoxamine==0 & Fluoxetine==0 & Sertraline==0 & Paroxetine==0 & Venlafaxine==0 & Reboxetine==0 & Mirtazapine==0 & Escitalopram==0 & Agomelatine==0 & Vortioxetine==0 & Duloxetine==0)
+
+* Create variable counting number of antidepressant classes exposed to
+* anycount counts how many of the listed variables equal 1
+* recode groups 2+ classes into single ">1" category
+egen antidep_mult = anycount(SSRIs TCAs TeCAs SNRIs SARIs Other_antidep MAOIs), values(1)
+recode antidep_mult (2/7=2)
+label define antideptotal_lbl 0 "0" 1 "1" 2 ">1"
+label values antidep_mult antideptotal_lbl
+tab antidep_mult, m
+
+* Create binary flags for one class only and multiple classes
+* Missing assigned for those with antidepressant exposure (not comparable referent)
+gen oneclass_only = .
+replace oneclass_only = 1 if antidep_mult==1  // exposed to exactly 1 class
+replace oneclass_only = 0 if antidep_mult==0  // unexposed reference group
+tab oneclass_only, m
+
+gen multiclass_only = .
+replace multiclass_only = 1 if antidep_mult==2  // exposed to >1 class
+replace multiclass_only = 0 if antidep_mult==0  // unexposed reference group
+tab multiclass_only, m
+
+* Create variable counting number of individual antidepressant drugs exposed to
+* anycount counts how many of the listed individual drug variables equal 1
+egen antidep_total = anycount(Amitriptyline_hcl Clomipramine_hcl Dosulepin_hcl Doxepin Imipramine_hcl Lofepramine Nortriptyline Trimipramine Citalopram Fluoxetine Sertraline Paroxetine Escitalopram Fluvoxamine Venlafaxine Reboxetine Duloxetine Mirtazapine Trazodone_hcl Phenelzine Tranylcypromine Moclobemide Flupentixol Agomelatine Vortioxetine), values(1)
+recode antidep_total (2/25=2)  // group 2+ drugs into ">1" category
+label values antidep_total antideptotal_lbl
+tab antidep_total, m
+
+* Create binary flags for one antidepressant only and multiple antidepressants
+gen one_antidep_only = .
+replace one_antidep_only = 1 if antidep_total==1  // exposed to exactly 1 drug
+replace one_antidep_only = 0 if antidep_total==0  // unexposed reference group
+
+gen two_antidep_only = .
+replace two_antidep_only = 1 if antidep_total==2  // exposed to >1 drug
+replace two_antidep_only = 0 if antidep_total==0  // unexposed reference group
+tab two_antidep_only, m
+
+* Create flag for SSRI + TCA only (no other antidepressant classes)
+gen ssri_tca_only = .
+replace ssri_tca_only = 1 if SSRIs==1 & TCAs==1 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0
+replace ssri_tca_only = 0 if SSRIs==0 & TCAs==0 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0  // unexposed reference group
+
+* Create flag for SSRI + TeCA only (no other antidepressant classes)
+gen ssri_teca_only = .
+replace ssri_teca_only = 1 if SSRIs==1 & TCAs==0 & TeCAs==1 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0
+replace ssri_teca_only = 0 if SSRIs==0 & TCAs==0 & TeCAs==0 & SARIs==0 & SNRIs==0 & MAOIs==0 & Other_antidep==0  // unexposed reference group
+
+* Label all exposure variables
+label variable SSRIs            "SSRIs only"
+label variable TCAs             "TCAs only"
+label variable TeCAs            "TeCAs only"
+label variable SARIs            "SARIs only"
+label variable SNRIs            "SNRIs only"
+label variable MAOIs            "MAOIs only"
+label variable Other_antidep    "Other antidepressants only"
+label variable citalo_only      "Citalopram only"
+label variable fluox_only       "Fluoxetine only"
+label variable sert_only        "Sertraline only"
+label variable amitrip_only     "Amitriptyline only"
+label variable oneclass_only    "Exposed to 1 antidepressant class"
+label variable multiclass_only  "Exposed to >1 antidepressant class"
+label variable one_antidep_only "Exposed to 1 antidepressant"
+label variable two_antidep_only "Exposed to >1 antidepressant"
+label variable ssri_tca_only    "SSRI + TCA only"
+label variable ssri_teca_only   "SSRI + TeCA only"
+
+* Check counts for each exposure variable
+foreach ad in SSRI TCA TeCA SARI SNRI MAOI Other citalo fluox sert amitrip one_antidep two_antidep oneclass multiclass ssri_tca ssri_teca {
+    display "Number exposed to `ad' only: "
+    count if `ad'_only==1
+}
+
+* Create outcome varlist
+vl create SENlist = (anySEN ASD sens_impair com_prob learning_dif physical_med_dif emotional_dif)
+
+***========================
+*** GEE MODELS - OR
+***========================
+
+* Remove any existing composite output file before starting loop
+capture erase "OR_all_AD_composite.csv"
+
+* Set panel structure for GEE
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+* Loop over each antidepressant type
+* Each iteration fits three GEE models and exports OR results
+foreach ad in SSRI citalo fluox sert TCA amitrip SNRI TeCA one_antidep two_antidep oneclass multiclass ssri_tca ssri_teca {
+
+    eststo clear
+    estimates drop _all
+
+    * Initialise empty local lists to store estimate names for each model
+    local or_uni_list ""
+    local or_mv1_list ""
+    local or_mv3_list ""
+
+    foreach v of varlist $SENlist {
+
+        *--- Unadjusted ---
+        xi: xtgee i.`v' Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+        eststo `v'_or_uni
+        local or_uni_list "`or_uni_list' `v'_or_uni"
+
+        *--- Partially adjusted ---
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+        eststo `v'_or_mv1
+        local or_mv1_list "`or_mv1_list' `v'_or_mv1"
+
+        *--- Fully adjusted ---
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+            i.parity_cat i.multiple_binary i.epilepsy ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+        eststo `v'_or_mv3
+        local or_mv3_list "`or_mv3_list' `v'_or_mv3"
+    }
+
+    * Export full OR table - all three models, one file per antidepressant
+    esttab `or_uni_list' `or_mv1_list' `or_mv3_list' ///
+        using "OR_`ad'_vs_unexposed.csv", ///
+        eform ///
+        cells("b(fmt(3) label(OR)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        scalars("N Number of observations") ///
+        nostar nonumber nonotes replace ///
+        addnotes("Odds ratios comparing `ad' only exposure to no antidepressant exposure. Models estimated using GEE with binomial family and logit link and robust standard errors. Women exposed to more than one antidepressant type are excluded. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+        title("Odds ratios for SEN outcomes - `ad' only vs unexposed")
+
+    * Set append vs replace for composite file
+    * First antidepressant replaces, subsequent ones append
+    if "`ad'" == "SSRI" {
+        local append_or replace
+    }
+    else {
+        local append_or append
+    }
+
+    * Export composite OR table - fully adjusted only, key rows only
+    * Keeps depression, antidepressant and interaction rows across all antidepressants
+    esttab `or_mv3_list' using "OR_all_AD_composite.csv", ///
+        eform ///
+        keep(1.Depression 1.`ad'_only 1.Depression#1.`ad'_only) ///
+        cells("b(fmt(3) label(OR)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        varlabels(1.Depression "Depression" ///
+                  1.`ad'_only "`ad' only" ///
+                  1.Depression#1.`ad'_only "Depression x `ad' interaction") ///
+        nostar nonumber nonotes `append_or' ///
+        addnotes("Fully adjusted model. `ad' only vs unexposed.") ///
+        title("`ad' only vs unexposed")
+}
+
+***========================
+*** PP AND ME FOR GEE MODELS
+***========================
+
+* Remove any existing composite output files before starting loop
+capture erase "PP_all_AD_composite.csv"
+capture erase "ME_all_AD_composite.csv"
+
+* Reset panel structure for GEE
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+eststo clear
+estimates drop _all
+
+* Loop over each antidepressant type
+* Each iteration fits three GEE models and estimates predicted probabilities and marginal effects
+foreach ad in SSRI citalo fluox sert TCA amitrip SNRI TeCA one_antidep two_antidep oneclass multiclass ssri_tca ssri_teca {
+
+    eststo clear
+    estimates drop _all
+
+    * Initialise empty local lists to store estimate names for each model
+    local pp_uni_list ""
+    local pp_mv1_list ""
+    local pp_mv3_list ""
+    local me_uni_list ""
+    local me_mv1_list ""
+    local me_mv3_list ""
+
+    foreach v of varlist $SENlist {
+
+        *--- Unadjusted predicted probabilities ---
+        xi: xtgee i.`v' Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        * Predicted probability for each Depression x antidepressant combination
+        margins Depression#`ad'_only, post
+        eststo `v'_pp_uni
+        local pp_uni_list "`pp_uni_list' `v'_pp_uni"
+
+        * Re-run model as margins post overwrites e()
+        quietly xi: xtgee i.`v' Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        * Marginal effect of antidepressant at each level of depression
+        margins, dydx(`ad'_only) at(Depression=(0 1)) post
+        eststo `v'_me_uni
+        local me_uni_list "`me_uni_list' `v'_me_uni"
+
+        *--- Partially adjusted predicted probabilities ---
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        margins Depression#`ad'_only, post
+        eststo `v'_pp_mv1
+        local pp_mv1_list "`pp_mv1_list' `v'_pp_mv1"
+
+        * Re-run model as margins post overwrites e()
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        margins, dydx(`ad'_only) at(Depression=(0 1)) post
+        eststo `v'_me_mv1
+        local me_mv1_list "`me_mv1_list' `v'_me_mv1"
+
+        *--- Fully adjusted predicted probabilities ---
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+            i.parity_cat i.multiple_binary i.epilepsy ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        margins Depression#`ad'_only, post
+        eststo `v'_pp_mv3
+        local pp_mv3_list "`pp_mv3_list' `v'_pp_mv3"
+
+        * Re-run model as margins post overwrites e()
+        quietly xi: xtgee i.`v' i.gender_cat b5.deprivation ///
+            i.ethnicity_cat AGE_PUPILCENSUS b2.matage_cat b0.mat_smoking_cat ///
+            i.parity_cat i.multiple_binary i.epilepsy ///
+            Depression##`ad'_only ///
+            if (Antidepressants==0 | `ad'_only==1), ///
+            i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+            eform vce(robust)
+
+        margins, dydx(`ad'_only) at(Depression=(0 1)) post
+        eststo `v'_me_mv3
+        local me_mv3_list "`me_mv3_list' `v'_me_mv3"
+    }
+
+    * Set append vs replace for composite files
+    if "`ad'" == "SSRI" {
+        local append_opt replace
+    }
+    else {
+        local append_opt append
+    }
+
+    * Export full PP table - all three models, one file per antidepressant
+    esttab `pp_uni_list' `pp_mv1_list' `pp_mv3_list' ///
+        using "PP_`ad'_vs_unexposed.csv", ///
+        cells("b(fmt(3) label(Predicted probability)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        varlabels(0.Depression#0.`ad'_only "No depression unexposed" ///
+                  0.Depression#1.`ad'_only "No depression `ad' only" ///
+                  1.Depression#0.`ad'_only "Depression unexposed" ///
+                  1.Depression#1.`ad'_only "Depression `ad' only") ///
+        nostar nonumber nonotes replace ///
+        addnotes("Predicted probabilities represent the estimated probability of a SEN diagnosis for each combination of maternal depression and `ad' exposure. Unexposed is the reference group. Models estimated using GEE with binomial family and logit link including an interaction term between maternal depression and antidepressant exposure. Women exposed to more than one antidepressant type are excluded. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+        title("Predicted probabilities for SEN outcomes - `ad' only vs unexposed")
+
+    * Export full ME table - all three models, one file per antidepressant
+    esttab `me_uni_list' `me_mv1_list' `me_mv3_list' ///
+        using "ME_`ad'_vs_unexposed.csv", ///
+        cells("b(fmt(3) label(Marginal effect)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        nostar nonumber nonotes replace ///
+        addnotes("Marginal effects represent the difference in predicted probability of a SEN diagnosis associated with `ad' only exposure compared to no antidepressant exposure estimated separately for mothers with and without a depression diagnosis. Models estimated using GEE with binomial family and logit link including an interaction term between maternal depression and antidepressant exposure. Women exposed to more than one antidepressant type are excluded. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+        title("Marginal effects for SEN outcomes - `ad' only vs unexposed")
+
+    * Export composite PP table - fully adjusted only, all antidepressants stacked
+    esttab `pp_mv3_list' using "PP_all_AD_composite.csv", ///
+        cells("b(fmt(3) label(Predicted probability)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        varlabels(0.Depression#0.`ad'_only "No depression unexposed" ///
+                  0.Depression#1.`ad'_only "No depression `ad' only" ///
+                  1.Depression#0.`ad'_only "Depression unexposed" ///
+                  1.Depression#1.`ad'_only "Depression `ad' only") ///
+        nostar nonumber nonotes `append_opt' ///
+        addnotes("Fully adjusted model. `ad' only vs unexposed.") ///
+        title("`ad' only vs unexposed")
+
+    * Export composite ME table - fully adjusted only, all antidepressants stacked
+    esttab `me_mv3_list' using "ME_all_AD_composite.csv", ///
+        cells("b(fmt(3) label(Marginal effect)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+        mlabels(, titles) ///
+        nostar nonumber nonotes `append_opt' ///
+        addnotes("Fully adjusted model. `ad' only vs unexposed.") ///
+        title("`ad' only vs unexposed")
+}
+
+***========================
+*** SAMPLE SIZE TABLE
+*** Individual antidepressant types vs unexposed
+*** Three models - unadjusted, partially adjusted, fully adjusted
+***========================
+
+* Close any existing postfile handle and remove any previous temp file
+capture postclose handle
+capture erase "sample_sizes_temp.dta"
+
+* Open postfile to store results - use long for n to handle large counts
+postfile handle str20 ad str20 model str40 group long n ///
+    using "sample_sizes_temp.dta"
+
+foreach ad in SSRI citalo fluox sert TCA amitrip SNRI TeCA one_antidep two_antidep oneclass multiclass ssri_tca ssri_teca {
+
+    *--- Unadjusted - restrict to exposed and unexposed only ---
+    preserve
+    drop if missing(Depression) | missing(`ad'_only)
+    keep if Antidepressants==0 | `ad'_only==1  // keep unexposed and this AD only
+    count
+    post handle ("`ad'") ("Unadjusted") ("Total observations") (r(N))
+    count if `ad'_only==1
+    post handle ("`ad'") ("Unadjusted") ("`ad' only exposed") (r(N))
+    count if Antidepressants==0
+    post handle ("`ad'") ("Unadjusted") ("Unexposed") (r(N))
+    restore
+
+    *--- Partially adjusted - additionally drop missing covariates ---
+    preserve
+    drop if missing(Depression) | missing(`ad'_only) | ///
+        missing(gender_cat) | missing(deprivation) | ///
+        missing(ethnicity_cat) | missing(AGE_PUPILCENSUS)
+    keep if Antidepressants==0 | `ad'_only==1
+    count
+    post handle ("`ad'") ("Partially adjusted") ("Total observations") (r(N))
+    count if `ad'_only==1
+    post handle ("`ad'") ("Partially adjusted") ("`ad' only exposed") (r(N))
+    count if Antidepressants==0
+    post handle ("`ad'") ("Partially adjusted") ("Unexposed") (r(N))
+    restore
+
+    *--- Fully adjusted - additionally drop missing fully adjusted covariates ---
+    preserve
+    drop if missing(Depression) | missing(`ad'_only) | ///
+        missing(gender_cat) | missing(deprivation) | ///
+        missing(ethnicity_cat) | missing(AGE_PUPILCENSUS) | ///
+        missing(matage_cat) | missing(mat_smoking_cat) | ///
+        missing(parity_cat) | missing(multiple_binary) | ///
+        missing(epilepsy)
+    keep if Antidepressants==0 | `ad'_only==1
+    count
+    post handle ("`ad'") ("Fully adjusted") ("Total observations") (r(N))
+    count if `ad'_only==1
+    post handle ("`ad'") ("Fully adjusted") ("`ad' only exposed") (r(N))
+    count if Antidepressants==0
+    post handle ("`ad'") ("Fully adjusted") ("Unexposed") (r(N))
+    restore
+}
+
+* Close postfile and export results to CSV
+postclose handle
+
+use "sample_sizes_temp.dta", clear
+
+* Format n with comma separators for readability
+gen n_fmt = string(n, "%12.0gc")
+
+export delimited using "sample_sizes_indiv_AD.csv", replace
+
+* Clean up temp file
+erase "sample_sizes_temp.dta"
+
+* Reload analysis dataset
+use "final_analysis_file.dta", clear
+
+log close

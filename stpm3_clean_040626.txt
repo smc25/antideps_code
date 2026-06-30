@@ -1,0 +1,272 @@
+***========================
+*** stpm3 ANALYSIS
+*** Flexible parametric survival model
+*** Outcome: ADHD diagnosis
+***========================
+
+* Author: Saraid McIlvride
+* Last modified: 04/06/26
+
+* Purpose: Flexible parametric survival models (Royston-Parmar) for ADHD diagnosis.
+* Marginal cumulative incidence and risk differences estimated using regression
+* standardisation via standsurv. Three model specifications: unadjusted,
+* partially adjusted and fully adjusted.
+
+capture log close
+log using "stpm3_ADHD.log", replace text
+
+use "final_analysis_file.dta", clear
+
+* Clear any stored estimates from previous runs
+estimates drop _all
+
+***========================
+*** DATA PREPARATION
+***========================
+
+* Replace missing value codes with Stata missing (.) so they are excluded from models
+replace gender_cat=. if gender_cat==3
+replace deprivation=. if deprivation==6
+replace matage_cat=. if matage_cat==5
+replace parity_cat=. if parity_cat==3
+
+* Recode ethnicity to combine small categories to avoid model convergence issues
+replace ethnicity_cat = 2 if inlist(ethnicity_cat, 3, 4)
+replace ethnicity_cat = 3 if ethnicity_cat == 5
+label define ethnicitylabelnew 1 "White" 2 "Asian/Black/Mixed" 3 "Other" 9 "Missing", modify
+label values ethnicity_cat ethnicitylabelnew
+tab ethnicity_cat, mi
+
+***========================
+*** DECLARE SURVIVAL DATA
+*** Time origin is date of birth
+*** Failure event is first ADHD diagnosis
+*** Scale converts days to years
+***========================
+
+stset ADHD_diag_date, origin(time NCCHD_birth_date) ///
+    failure(child_any_ADHD==1) id(ALF_PE) scale(365.25)
+
+
+***========================
+*** SELECT OPTIMAL DEGREES OF FREEDOM
+*** Compare AIC and BIC across df values 1-6
+*** Select df with lowest AIC
+***========================
+
+forvalues df = 1/6 {
+    quietly stpm3 i.Depression##i.Antidepressants ///
+        i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        b2.matage_cat b0.mat_smoking_cat i.parity_cat ///
+        i.multiple_binary i.epilepsy, ///
+        scale(lncumhazard) df(`df') vce(robust)
+    display "df=`df'  AIC=" e(AIC) "  BIC=" e(BIC)
+}
+
+* df=6 selected based on lowest AIC 
+
+***========================
+*** GENERATE TIME VARIABLE FOR PREDICTIONS
+*** pred_time used by standsurv to predict cumulative incidence
+***========================
+
+range pred_time 4 13 10
+
+***========================
+*** FIT MODELS AND ESTIMATE CUMULATIVE INCIDENCE
+***========================
+
+************
+* Unadjusted
+************
+
+* Fit unadjusted stpm3 model with interaction term
+stpm3 i.Depression##i.Antidepressants, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+
+* Store estimates for HR table
+estimates store stpm3_uni
+
+* Store N and events before standsurv overwrites e()
+scalar n_obs_uni = e(N)
+quietly count if _d==1 & e(sample)
+scalar n_events_uni = r(N)
+
+* Estimate marginal cumulative incidence for each exposure group
+* using regression standardisation - averages over observed covariate distribution
+standsurv if e(sample), ///
+    at1(Depression 0 Antidepressants 0) ///
+    at2(Depression 0 Antidepressants 1) ///
+    at3(Depression 1 Antidepressants 0) ///
+    at4(Depression 1 Antidepressants 1) ///
+    failure ci ///
+    timevar(pred_time) ///
+    frame(cif_uni, replace) ///
+    atvar(cif0 cif1 cif2 cif3)
+
+* Add labels and sample size to frame
+frame cif_uni {
+    rename pred_time t
+    gen model    = "Unadjusted"
+    gen n_obs    = scalar(n_obs_uni)
+    gen n_events = scalar(n_events_uni)
+}
+
+********************
+* Partially adjusted
+********************
+
+* Fit partially adjusted stpm3 model with interaction term
+stpm3 i.Depression##i.Antidepressants ///
+    i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+
+estimates store stpm3_mv1
+
+scalar n_obs_mv1 = e(N)
+quietly count if _d==1 & e(sample)
+scalar n_events_mv1 = r(N)
+
+standsurv if e(sample), ///
+    at1(Depression 0 Antidepressants 0) ///
+    at2(Depression 0 Antidepressants 1) ///
+    at3(Depression 1 Antidepressants 0) ///
+    at4(Depression 1 Antidepressants 1) ///
+    failure ci ///
+    timevar(pred_time) ///
+    frame(cif_mv1, replace) ///
+    atvar(cif0 cif1 cif2 cif3)
+
+frame cif_mv1 {
+    rename pred_time t
+    gen model    = "Partially adjusted"
+    gen n_obs    = scalar(n_obs_mv1)
+    gen n_events = scalar(n_events_mv1)
+}
+
+****************
+* Fully adjusted
+****************
+
+* Fit fully adjusted stpm3 model with interaction term
+stpm3 i.Depression##i.Antidepressants ///
+    i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+    b2.matage_cat b0.mat_smoking_cat i.parity_cat ///
+    i.multiple_binary i.epilepsy, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+
+estimates store stpm3_mv3
+
+scalar n_obs_mv3 = e(N)
+quietly count if _d==1 & e(sample)
+scalar n_events_mv3 = r(N)
+
+standsurv if e(sample), ///
+    at1(Depression 0 Antidepressants 0) ///
+    at2(Depression 0 Antidepressants 1) ///
+    at3(Depression 1 Antidepressants 0) ///
+    at4(Depression 1 Antidepressants 1) ///
+    failure ci ///
+    timevar(pred_time) ///
+    frame(cif_mv3, replace) ///
+    atvar(cif0 cif1 cif2 cif3)
+
+frame cif_mv3 {
+    rename pred_time t
+    gen model    = "Fully adjusted"
+    gen n_obs    = scalar(n_obs_mv3)
+    gen n_events = scalar(n_events_mv3)
+}
+
+* Export cumulative incidence results for each model
+frame cif_uni: export delimited using "stpm3_cif_unadjusted.csv", replace
+frame cif_mv1: export delimited using "stpm3_cif_partial.csv", replace
+frame cif_mv3: export delimited using "stpm3_cif_adjusted.csv", replace
+
+***========================
+*** RISK DIFFERENCES WITH PRECISE CIs
+*** Fully adjusted model only
+*** Two comparisons:
+*** 1. Antidepressants effect at Depression=0
+*** 2. Antidepressants effect at Depression=1
+*** CIs derived using delta method via standsurv contrast option
+***========================
+
+* Re-run fully adjusted model before standsurv
+* as stored estimates may have been overwritten
+stpm3 i.Depression##i.Antidepressants ///
+    i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+    b2.matage_cat b0.mat_smoking_cat i.parity_cat ///
+    i.multiple_binary i.epilepsy, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+
+* Comparison 1: Antidepressants effect at Depression=0
+* at1 = unexposed reference, at2 = antidepressant exposed
+* contrast(difference) computes at2 - at1 with delta method CIs
+standsurv if e(sample), ///
+    at1(Depression 0 Antidepressants 0) ///
+    at2(Depression 0 Antidepressants 1) ///
+    failure ci ///
+    timevar(pred_time) ///
+    contrast(difference) ///
+    frame(rd_dep0, replace)
+
+frame rd_dep0 {
+    rename pred_time t
+    gen comparison = "Antidepressants effect at Depression=0"
+    gen model      = "Fully adjusted"
+    export delimited using "stpm3_rd_dep0_mv3.csv", replace
+}
+
+* Comparison 2: Antidepressants effect at Depression=1
+standsurv if e(sample), ///
+    at1(Depression 1 Antidepressants 0) ///
+    at2(Depression 1 Antidepressants 1) ///
+    failure ci ///
+    timevar(pred_time) ///
+    contrast(difference) ///
+    frame(rd_dep1, replace)
+
+frame rd_dep1 {
+    rename pred_time t
+    gen comparison = "Antidepressants effect at Depression=1"
+    gen model      = "Fully adjusted"
+    export delimited using "stpm3_rd_dep1_mv3.csv", replace
+}
+
+***========================
+*** HAZARD RATIO TABLE
+*** Re-run all three models for esttab
+*** eform exponentiates coefficients to give HRs
+***========================
+
+* Unadjusted
+stpm3 i.Depression##i.Antidepressants, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+estimates store stpm3_uni
+
+* Partially adjusted
+stpm3 i.Depression##i.Antidepressants ///
+    i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+estimates store stpm3_mv1
+
+* Fully adjusted
+stpm3 i.Depression##i.Antidepressants ///
+    i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+    b2.matage_cat b0.mat_smoking_cat i.parity_cat ///
+    i.multiple_binary i.epilepsy, ///
+    scale(lncumhazard) df(6) eform vce(robust)
+estimates store stpm3_mv3
+
+* Export HR table combining all three models
+esttab stpm3_uni stpm3_mv1 stpm3_mv3 ///
+    using "stpm3_HR_table.csv", ///
+    eform ///
+    cells("b(fmt(3) label(HR)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    mlabels("Unadjusted" "Partially adjusted" "Fully adjusted") ///
+    nostar nonumber nonotes replace ///
+    addnotes("Hazard ratios from flexible parametric survival model stpm3 with 6 degrees of freedom on the log cumulative hazard scale. Includes interaction term between maternal depression and antidepressant exposure. Time origin is date of birth. Scale is years. Partially adjusted model includes sex deprivation ethnicity and age. Fully adjusted model additionally includes maternal age maternal smoking parity multiple birth and epilepsy.") ///
+    title("Hazard ratios for ADHD diagnosis - stpm3 flexible parametric model")
+
+log close

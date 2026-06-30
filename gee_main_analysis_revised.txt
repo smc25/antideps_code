@@ -1,0 +1,265 @@
+***GEE models Depression and Antidepressants - revisions
+***Author - Saraid McIlvride
+***Last modified - 16/03/26
+
+***Purpose: GEE models including Depression and Antidepressants, with and without 
+***interaction term. Three models: unadjusted, partially adjusted and fully adjusted. 
+***Odds ratios, predicted probabilities and marginal effects estimated.
+
+capture log close
+log using "GEE_main_analysis.log", replace text
+
+use "final_analysis_file.dta", clear
+
+***========================
+*** DATA PREPARATION
+***========================
+
+* Replace missing value codes with Stata missing (.) so they are excluded from models
+replace gender_cat=. if gender_cat==3
+replace deprivation=. if deprivation==6
+replace matage_cat=. if matage_cat==5
+replace parity_cat=. if parity_cat==3
+
+* Create outcome varlist for looping over all SEN outcomes
+vl create SENlist = (anySEN ASD sens_impair com_prob learning_dif physical_med_dif emotional_dif)
+
+***========================
+*** GEE MODELS - OR WITHOUT INTERACTION
+*** Depression and Antidepressants as separate main effects
+***========================
+
+* Clear any stored estimates
+eststo clear
+estimates drop _all
+
+* Set panel structure for GEE
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+* Run QIC statistic to select optimal correlation structure
+* Independent structure selected as lowest QIC - code retained for reference
+/*qic anySEN Depression_bcd, i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform
+qic anySEN Depression_bcd, i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(exchangeable) eform
+qic anySEN Depression_bcd, i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(unstructured) eform*/
+
+* Unadjusted model
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' Depression Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust)
+    eststo `v'_uni
+}
+
+* Partially adjusted - sex, deprivation, ethnicity, age
+* Base category set to deprivation quintile 5; female and white coded automatically
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        Depression Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust)
+    eststo `v'_mv1
+}
+
+* Fully adjusted - additionally includes maternal age, smoking, parity, multiple birth, epilepsy
+* Base category set to deprivation quintile 5, maternal age category 2
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary i.epilepsy ///
+        Depression Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust) 
+    eststo `v'_mv3
+}
+
+* Export all stored estimates to CSV
+esttab _all using "results.csv", ///
+    cells("b(label(OR)) ci_l(label(Lower limit)) ci_u(label(Upper limit)) p(label(p-value))") eform ///
+    title("GEE analysis results - Depression Antidepressants") nolabel plain noobs ///
+    stats(N, fmt("%9.0fc")) replace
+
+***========================
+*** GEE MODELS - OR WITH INTERACTION
+*** Depression x Antidepressants interaction term included
+***========================
+
+* Clear stored estimates before running interaction models
+eststo clear
+estimates drop _all
+
+* Reset panel structure
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+* Unadjusted model with interaction
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust)
+    eststo `v'_uni
+}
+
+* Partially adjusted with interaction
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust)
+    eststo `v'_mv1
+}
+
+* Fully adjusted with interaction
+foreach v of varlist $SENlist {
+    xi:xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary i.epilepsy ///
+        Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) eform vce(robust) 
+    eststo `v'_mv3
+}
+
+* Append interaction model results to existing results file
+esttab _all using "results.csv", ///
+    cells("b(label(OR)) ci_l(label(Lower limit)) ci_u(label(Upper limit)) p(label(p-value))") eform ///
+    title("GEE analysis results - Depression##Antidepressants") nolabel plain noobs ///
+    stats(N, fmt("%9.0fc")) append
+
+***========================
+*** ABSOLUTE RISK
+*** Predicted probabilities and marginal effects
+*** Three model specifications
+***========================
+
+******************
+* Unadjusted model
+******************
+
+* Clear stored estimates and reset panel structure
+eststo clear
+estimates drop _all
+
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+foreach v of varlist $SENlist {
+
+    * Run unadjusted GEE model with interaction term
+    xi: xtgee i.`v' Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Predicted probability for each Depression x Antidepressants combination
+    margins Depression#Antidepressants, post
+    eststo `v'_pp
+
+    * Re-run model as margins post overwrites e()
+    quietly xi: xtgee i.`v' Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Marginal effect of antidepressants at each level of depression
+    margins, dydx(Antidepressants) at(Depression=(0 1)), post
+    eststo `v'_me
+}
+
+* Export predicted probabilities - unadjusted
+esttab *_pp using "predicted_probabilities_uni.xlsx", ///
+    cells("b(fmt(3) label(Predicted probability)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Predicted probabilities by Depression x Antidepressants group - unadjusted")
+
+* Export marginal effects - unadjusted
+esttab *_me using "marginal_effects_uni.xlsx", ///
+    cells("b(fmt(3) label(Marginal effect)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Marginal effect of Antidepressants at Depression=0 and Depression=1 - unadjusted")
+
+**************************
+* Partially adjusted model
+**************************
+
+* Clear stored estimates and reset panel structure
+eststo clear
+estimates drop _all
+
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+foreach v of varlist $SENlist {
+
+    * Run partially adjusted GEE model with interaction term
+    xi: xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Predicted probability for each Depression x Antidepressants combination
+    margins Depression#Antidepressants, post
+    eststo `v'_pp
+
+    * Re-run model as margins post overwrites e()
+    quietly xi: xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Marginal effect of antidepressants at each level of depression
+    margins, dydx(Antidepressants) at(Depression=(0 1)), post
+    eststo `v'_me
+}
+
+* Export predicted probabilities - partially adjusted
+esttab *_pp using "predicted_probabilities_partial.xlsx", ///
+    cells("b(fmt(3) label(Predicted probability)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Predicted probabilities by Depression x Antidepressants group - partially adjusted")
+
+* Export marginal effects - partially adjusted
+esttab *_me using "marginal_effects_partial.xlsx", ///
+    cells("b(fmt(3) label(Marginal effect)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Marginal effect of Antidepressants at Depression=0 and Depression=1 - partially adjusted")
+
+**********************
+* Fully adjusted model
+**********************
+
+* Clear stored estimates and reset panel structure
+eststo clear
+estimates drop _all
+
+sort ALF_PE YEAR
+xtset ALF_PE YEAR
+
+foreach v of varlist $SENlist {
+
+    * Run fully adjusted GEE model with interaction term
+    xi: xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary ///
+        i.epilepsy Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Predicted probability for each Depression x Antidepressants combination
+    margins Depression#Antidepressants, post
+    eststo `v'_pp
+
+    * Re-run model as margins post overwrites e()
+    quietly xi: xtgee i.`v' i.gender_cat b5.deprivation i.ethnicity_cat AGE_PUPILCENSUS ///
+        b2.matage_cat b0.mat_smoking_cat i.parity_cat i.multiple_binary ///
+        i.epilepsy Depression##Antidepressants, ///
+        i(ALF_PE) t(YEAR) family(binomial) link(logit) corr(independent) ///
+        eform vce(robust)
+
+    * Marginal effect of antidepressants at each level of depression
+    margins, dydx(Antidepressants) at(Depression=(0 1)), post
+    eststo `v'_me
+}
+
+* Export predicted probabilities - fully adjusted
+esttab *_pp using "predicted_probabilities_adjusted.xlsx", ///
+    cells("b(fmt(3) label(Predicted probability)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Predicted probabilities by Depression x Antidepressants group - fully adjusted")
+
+* Export marginal effects - fully adjusted
+esttab *_me using "marginal_effects_adjusted.xlsx", ///
+    cells("b(fmt(3) label(Marginal effect)) ci_l(fmt(3) label(95% CI lower)) ci_u(fmt(3) label(95% CI upper)) p(fmt(3) label(P value))") ///
+    nostar nonumber replace ///
+    title("Marginal effect of Antidepressants at Depression=0 and Depression=1 - fully adjusted")
+
+log close
