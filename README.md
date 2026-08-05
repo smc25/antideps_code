@@ -117,3 +117,7 @@ Flexible parametric survival models (Royston-Parmar models) implemented using th
 
 This study was approved by the SAIL Databank Information Governance Review Panel. All data were accessed within the SAIL secure research environment in accordance with data governance requirements.
 
+## Licence
+
+This code is licensed under the MIT License. See the LICENSE file for details.
+
